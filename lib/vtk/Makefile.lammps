@@ -1,0 +1,51 @@
+# Settings that the LAMMPS build will import when this package library is used
+
+
+#Settings Brian
+ifeq ($(shell uname), Darwin)
+vtk_SYSINC = -I/usr/include/vtk -I${HOME}/Desktop/ssa_tDPD/local/include/vtk-7.1/ -I${HOME}/Desktop/ssa_tDPD/local/include
+vtk_SYSPATH = -L${HOME}/Desktop/ssa_tDPD/local/lib/ -L${HOME}/Desktop/ssa_tDPD/local/lib
+vtk_SYSLIB = -lvtkCommonCore-7.1 -lvtkIOCore-7.1 -lvtkCommonDataModel-7.1 -lvtkIOXML-7.1 -lvtkIOLegacy-7.1 -lvtkIOParallelXML-7.1
+endif
+
+#Settings Bruno Desktop
+ifeq ($(shell hostname), fourier)
+vtk_SYSINC = -I/usr/include/vtk-6.3
+vtk_SYSLIB = -lvtkCommonCore-6.3 -lvtkIOCore-6.3 -lvtkCommonDataModel-6.3 -lvtkIOXML-6.3 -lvtkIOLegacy-6.3 -lvtkIOParallelXML-6.3
+vtk_SYSPATH = 
+endif
+
+#Settings Bruno Laptop
+ifeq ($(shell hostname), navier)
+vtk_SYSINC = -I/usr/include/vtk-6.3
+vtk_SYSLIB = -lvtkCommonCore-6.3 -lvtkIOCore-6.3 -lvtkIOXML-6.3 -lvtkIOLegacy-6.3 -lvtkCommonDataModel-6.3 -lvtkIOParallelXML-6.3
+vtk_SYSPATH =
+endif
+
+#Settings Tau-Mu Laptop
+ifeq ($(shell hostname), P3520)
+vtk_SYSINC = -I/usr/local/include/vtk-7.1
+vtk_SYSLIB = -lvtkCommonCore-7.1 -lvtkIOCore-7.1 -lvtkIOXML-7.1 -lvtkIOLegacy-7.1 -lvtkCommonDataModel-7.1 -lvtkIOParallelXML-7.1
+vtk_SYSPATH = -L/usr/local/lib
+endif
+
+#Settings Brian server (James)
+ifeq ($(shell hostname), james)
+vtk_SYSINC = -I/usr/include/vtk-6.2
+vtk_SYSLIB = -lvtkCommonCore-6.2 -lvtkIOCore-6.2 -lvtkIOXML-6.2 -lvtkIOLegacy-6.2 -lvtkCommonDataModel-6.2 -lvtkIOParallelXML-6.2
+vtk_SYSPATH =
+endif
+
+#Settings Knot cluster
+ifeq ($(shell hostname), knot.cnsi.ucsb.edu)
+vtk_SYSINC = -I/home/bjacob/usr/local/include/vtk-7.1/
+vtk_SYSLIB =  -lvtkCommonCore-7.1 -lvtkIOCore-7.1 -lvtkCommonDataModel-7.1 -lvtkIOXML-7.1 -lvtkIOLegacy-7.1 -lvtkIOParallelXML-7.1
+vtk_SYSPATH = -L/home/bjacob/usr/local/lib/
+endif
+
+#Settings Pod cluster
+ifeq ($(shell hostname), pod-login1.podcluster)
+vtk_SYSINC = -I/home/bjacob/usr/local/include/vtk-6.3
+vtk_SYSLIB = -lvtkCommonCore-6.3 -lvtkIOCore-6.3 -lvtkIOXML-6.3 -lvtkIOLegacy-6.3 -lvtkCommonDataModel-6.3 -lvtkIOParallelXML-6.3
+vtk_SYSPATH = -L/home/bjacob/usr/local/lib
+endif

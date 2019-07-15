@@ -1,0 +1,248 @@
+# FSI example
+# Author: Bruno Jacob, UCSB
+# Email: bruno@engineering.ucsb.edu
+# Date: June 28, 2019
+
+
+
+###################################################################################
+# Lammps setup
+###################################################################################
+dimension         2
+units             si
+#                |   atom style   | |num_tsdpd_species|   | num_ssa_species | |num_ssa_reactions |
+atom_style        ssa_tsdpd/atomic           0                     0                  0
+
+
+
+###################################################################################
+# Temporal integration setup
+###################################################################################
+variable     dt equal 1e-8               #time step
+variable     nt equal 1000000000         #number of time steps
+variable     freq_results equal 10000    #freq. writing results (file)
+variable     freq_screen equal 10000     #freq. writing results (screen)
+
+
+
+###################################################################################
+# Domain setup
+###################################################################################
+boundary	   p f p 
+
+variable           Lx equal 300e-6                #length x-dir
+variable           Ly equal 100e-6                #length y-dir
+
+variable	   nx equal 60                    #number of fluid particles in x-dir
+variable           nwall equal 3                  #number of wall particles
+variable	   deltaf equal v_Ly/v_nx         #space between fluid particles
+variable	   deltab equal 0.6*v_deltaf      #space between beam particles
+variable           densityf equal 1000.           #density of fluid phase
+variable           densityb equal 7850.           #density of beam (solid)
+variable           Lbz equal -50e-6               #length of buffer zone
+
+variable           Ltotx equal v_Lx-v_Lbz
+variable           Ltoty equal v_Ly+2*v_nwall*v_deltaf
+
+
+
+###################################################################################
+# Create atoms and regions
+###################################################################################
+# Regions: domain, cylinder_region, fluid_region, upperwall_region, lowerwall_region
+# Groups: cylinder, fluid, walls
+# Types: fluid => type 1; solids (cylinder and walls) => type 2
+
+variable           eps equal 1e-12
+variable           wallThickness equal v_nwall*v_deltaf    #wall thickness
+
+variable           yB0 equal -v_wallThickness             
+variable           yB1 equal 0.0                          
+variable           yT0 equal v_Ly                         
+variable           yT1 equal v_Ly+v_wallThickness         
+variable           Lz equal v_deltab                      #length z-dir
+variable           bx0 equal 100e-6                       #x0 of beam
+variable           bx1 equal 105e-6                       #x1 of beam
+variable           by0 equal v_yB0                        #y0 of beam
+variable           by1 equal 50e-6                        #y1 of beam
+variable           cy  equal v_Ly/2.0
+
+# evaluate volumes
+variable           vtot         equal v_Ltotx*v_Ltoty                  #actual total volume of fluid (for 2d system)
+variable           vwall        equal 2.0*v_wallThickness*v_Ltotx      #volume of wall
+variable           vbeam        equal (v_bx1-v_bx0)*(v_by1-v_by0)*1.   #volume of beam                    
+variable           vfluid       equal v_vtot-v_vwall-v_vbeam           #volume of fluid
+
+
+# create simulation box
+region             domain block ${Lbz} ${Lx} ${yB0} ${yT1} 0.0 ${Lz} units box
+create_box         3 domain
+lattice		   sq ${deltaf} origin 0.5 0.5 0.0
+
+
+# create fluid region, particles
+region             fluid_region  block ${Lbz} ${Lx} ${yB1} ${yT0} 0.0 ${Lz} units box
+create_atoms       1 region fluid_region
+
+
+# create wall regions, particles
+region             upperwall_region  block ${Lbz} ${Lx} ${yB0} ${yB1} 0.0 ${Lz} units box
+region             lowerwall_region  block ${Lbz} ${Lx} ${yT0} ${yT1} 0.0 ${Lz} units box
+delete_atoms       region upperwall_region
+delete_atoms       region lowerwall_region
+create_atoms       3 region upperwall_region
+create_atoms       3 region lowerwall_region
+
+# create beam region, particles
+region             beam_region block ${bx0} ${bx1} ${by0} ${by1} 0.0 ${Lz} units box
+delete_atoms       region beam_region
+lattice		   sq ${deltab} origin 0.5 0.5 0.0
+create_atoms       2 region beam_region
+
+# Create groups
+group              upperwall region upperwall_region
+group              lowerwall region lowerwall_region
+group              walls union upperwall lowerwall
+group              beam region beam_region
+group              fluid subtract all beam walls
+
+
+# count atoms in each group
+variable           nbeam equal count(beam)   #number of atoms in cylinder group 
+variable           nfluid equal count(fluid) #number of atoms in fluid group
+
+
+# mass of fluid particles
+variable 	   mfluid equal v_vfluid*v_densityf/v_nfluid
+
+# mass of beam particles
+variable           mbeam equal v_vbeam*v_densityb/v_nbeam
+
+
+mass		   1 ${mfluid}
+mass		   2 ${mbeam}
+mass		   3 ${mfluid}
+
+print "mfluid    = ${mfluid}"
+print "mbeam     = ${mbeam}"
+
+set	  	   group fluid ssa_tsdpd/rho ${densityf}
+set	  	   group walls ssa_tsdpd/rho ${densityf}
+set                group beam ssa_tsdpd/rho ${densityb}
+set	  	   group all ssa_tsdpd/e 0.
+
+
+
+########################################################################################################################
+# Set solid tag command
+#set      group  group_name                  command           set solid_tag of group to 1     choose "fixed" or "free" boundary
+########################################################################################################################
+set       group     beam            ssa_tsdpd/solid_tag                1                               free
+set       group     walls           ssa_tsdpd/solid_tag                1                               fixed
+
+
+
+###################################################################################
+# Define inlet velocity and dynamic viscosity
+###################################################################################
+variable          vo      equal  0.0333
+variable          nu      equal  1e-3
+
+
+
+###################################################################################################################
+# Evaluate soundspeed for deforming solid
+###################################################################################################################
+variable        E       equal  2e5                                           # Young's modulus
+variable        Pratio  equal  0.33                                          # Poisson's ratio
+variable        G       equal  v_E/(2.0*(1.0+v_Pratio))                      # Shear modulus
+variable        K       equal  v_E/(3.0*(1.0-2.0*v_Pratio))                  # Bulk modulus
+variable        c0      equal  sqrt(v_K/v_densityb)                          # Artificial speed of sound of beam
+
+
+print           'c0 = ${c0}'
+variable         c0f equal 10.*v_vo
+
+
+
+###################################################################################
+# Set interations
+###################################################################################
+variable	   h equal "3.0*v_deltaf"
+
+pair_style	   ssa_tsdpd/bvf/mechanics
+
+# 1 = fluid
+# 2 = beam
+# 3 = walls
+
+#                     |     rho0    |    |  c0  |  |   eta   |  |   h   |  |   cutc   | |   G  | 
+pair_coeff      1 1      ${densityf}      ${c0f}      ${nu}       ${h}        ${h}         0.0        
+pair_coeff      1 2      ${densityf}      ${c0f}      ${nu}       ${h}        ${h}         0.0        
+pair_coeff      1 3      ${densityf}      ${c0f}      ${nu}       ${h}        ${h}         0.0        
+pair_coeff      2 2      ${densityb}      ${c0}       ${nu}       ${h}        ${h}         ${G}    
+pair_coeff      2 3      ${densityb}      ${c0}       ${nu}       ${h}        ${h}         ${G}
+pair_coeff      3 3      ${densityf}      ${c0f}      ${nu}       ${h}        ${h}         0.0
+
+
+
+###################################################################################
+# Initial velocity and concentration fields
+###################################################################################
+# Velocity
+#velocity        fluid set ${vo} 0.0 0.0 units box   #(group-ID, set vx vy vz)
+#velocity        beam set ${vo} 0.0 0.0 units box   #(group-ID, set vx vy vz)
+
+
+
+###################################################################################
+# Info on screen
+###################################################################################
+thermo          ${freq_screen}
+
+
+
+###################################################################################
+# Integration of particles' position and velocity
+###################################################################################
+# Integrator    |    label    |    |  group  |     |              style             | 
+fix               integration           all          ssa_tsdpd/bvf/mechanics
+
+#compute density
+compute         rhoatom all ssa_tsdpd/rho/atom
+
+#compute phi
+compute         phiatom all ssa_tsdpd/phi/atom
+
+#compute solid_tag
+compute         solidtagatom all ssa_tsdpd/solid_tag/atom
+
+#compute stress xx
+compute         stressxx beam ssa_tsdpd/stress/atom 2 2
+
+
+
+###################################################################################
+# Sponge zones (non-reflective boundary conditions in x-direction)
+###################################################################################
+#   |       label      |   | group-ID |  |        style       |    | forcing type  |  | buffer direction |   | frequency |  |  rank  |  |  centerX  | | centerY | | length-x |  | length-y |   |  value  |
+fix     sponge_vx             fluid         ssa_tsdpd/buffer           velocity                x                   1            0           -25e-6        ${cy}       25e-6        50e-6         ${vo}
+fix     sponge_vy             fluid         ssa_tsdpd/buffer           velocity                x                   1            1           -25e-6        ${cy}       25e-6        50e-6         0.0
+
+
+
+###################################################################################
+# Output results
+###################################################################################
+#              | label |  |group-ID|  |    style    |  |     frequency      |  |  filenames | |                     variables to print                         |
+dump             dmpvtk       all           vtk          ${freq_results}          dump*.vtk       id type vx vy vz c_rhoatom c_phiatom c_solidtagatom c_stressxx
+
+
+
+###################################################################################
+# Run simulation
+###################################################################################
+variable        skin equal 0.3*${h}
+neighbor        ${skin} bin
+timestep        ${dt}
+run             ${nt}

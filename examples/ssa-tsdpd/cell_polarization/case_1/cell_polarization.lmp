@@ -1,0 +1,273 @@
+# SPH polarization test
+# Author: Bruno Jacob, UCSB
+# Email: bruno@engineering.ucsb.edu
+# Date: June 28, 2019
+
+
+###################################################################################
+# Lammps setup
+###################################################################################
+dimension         2
+units             si
+#                 |   atom style   | |num_sdpd_species| |num_ssa_species|  |num_ssa_reactions|
+atom_style         ssa_tsdpd/atomic            1                0                   0
+
+
+###################################################################################
+# Temporal integration setup
+###################################################################################
+variable     dt equal 1e-10                   #time step
+variable     nt equal 40000                   #number of time steps
+variable     freq_results equal 1000          #freq. writing results (file)
+variable     freq_screen equal  1000          #freq. writing results (screen)
+
+
+###################################################################################
+# Domain setup
+###################################################################################
+boundary	   p p p 
+
+variable           Lx equal 50e-6                         #length x-dir
+variable           Ly equal 50e-6                         #length y-dir
+
+variable           radius_external equal 0.20*v_Lx        #external radius
+variable           radius_internal equal 0.15*v_Lx        #internal radius
+variable           radius_cell_external equal 0.20*v_Lx   #external radius (cell)
+variable           radius_cell_internal equal 0.15*v_Lx   #internal radius (cell)
+
+variable           nx equal 100                           #number of fluid particles in x-dir
+variable           deltaf equal v_Ly/v_nx                 #space between fluid particles
+variable           deltac equal 0.8*v_deltaf              #space between cell particles 
+
+variable           densityf equal 1000                    #density of fluid phase
+variable           densityc equal 1100                    #density of cell phase
+variable           densityi equal 1500                    #density of interior phase
+
+
+###################################################################################
+# Create atoms and regions
+###################################################################################
+variable           Lz equal v_deltac              #length z-dir
+
+variable    	   cx equal ${Lx}/2               #x-coord cell center
+variable           cy equal ${Ly}/2               #y-coord cell center
+variable           cz equal ${Lz}/2               #z-coord cell center
+
+
+# evaluate volumes
+variable       vtot     equal v_Lx*v_Ly                                                   #actual total volume of fluid (for 2d system)
+variable       vcelltot equal 3.141592653589793*(v_radius_external)*(v_radius_external)   #volume of cell (total)
+variable       vcellint equal 3.141592653589793*(v_radius_internal)*(v_radius_internal)   #volume of cell (interior)
+variable       vcell    equal v_vcelltot-v_vcellint                                       #volume of cell wall
+variable       vfluid   equal v_vtot-v_vcelltot                                           #volume of fluid
+
+
+# create simulation box
+region         domain block 0 ${Lx} 0 ${Ly} 0 ${Lz} units box
+create_box     4 domain
+
+
+# create cell region
+region         cell_external_region   sphere ${cx} ${cy} ${cz} ${radius_cell_external} units box
+region         cell_internal_region   sphere ${cx} ${cy} ${cz} ${radius_cell_internal} units box
+region         external_region        sphere ${cx} ${cy} ${cz} ${radius_external} units box
+region         internal_region        sphere ${cx} ${cy} ${cz} ${radius_internal} units box
+
+
+# create fluid region
+region         fluid_region  block 0.0 ${Lx} 0.0 ${Ly} 0 ${Lz} units box
+
+
+# create fluid particles
+lattice	       sq ${deltaf} origin 0.5 0.5 0.0       
+create_atoms   1 region fluid_region
+
+
+# create cell particles (cell wall)
+lattice	       sq ${deltac} origin 0.5 0.5 0.0
+delete_atoms   region external_region
+create_atoms   2 region cell_external_region
+#create_atoms  2 random 8000 2511 cell_region  #in case we want to place particles randomly
+
+
+# create cell particles (cell interior)
+delete_atoms   region cell_internal_region
+lattice	       sq ${deltaf} origin 0.5 0.5 0.0
+create_atoms   3 region internal_region
+group          interior region internal_region
+
+# create groups
+group          fluid type 1
+group          cell type 2
+group          interior type 3
+group          celltot subtract all fluid
+
+
+# count atoms in each group
+variable       ncell equal count(cell)           #number of atoms in cell wall group 
+variable       nfluid equal count(fluid)         #number of atoms in fluid group
+variable       ninterior equal count(interior)   #number of atoms in interior group
+
+
+print     "ncell     = ${ncell}"
+print     "nfluid    = ${nfluid}"
+print     "ninterior = ${ninterior}"
+
+
+# mass of fluid particles
+variable       mfluid equal v_vfluid*v_densityf/v_nfluid
+
+
+# mass of cell particles
+variable       mcell equal v_vcell*v_densityc/v_ncell
+
+
+# mass of interior particles
+variable       minterior equal v_vcellint*v_densityi/v_ninterior
+
+print     "minterior = ${minterior}"
+
+mass	  1 ${mfluid}
+mass	  2 ${mcell}
+mass	  3 ${minterior}
+
+
+set	  group fluid ssa_tsdpd/rho ${densityf}
+set       group cell ssa_tsdpd/rho ${densityc}
+set       group interior ssa_tsdpd/rho ${densityi}
+set	  group all ssa_tsdpd/e 0.
+
+
+########################################################################################################################
+# Select only part of the cell (e.g., select upper part of the circle, and change its density)
+########################################################################################################################
+variable myy       atom y
+variable H         equal "1.0*(0.05*v_Lx)/2.0"
+variable height    equal "v_cy - (v_radius_internal + 0.05*v_Lx - v_H)"
+variable upperhalf atom "v_myy > v_cy"  
+variable upperhalf atom "v_myy > v_height"  
+group upperhalfgroup variable upperhalf # group of atoms that have y>0.5 (upper half of the box)
+group upperhalfcircle intersect upperhalfgroup cell # group of atoms that are the intersection of groups upperhalfgroup and cell
+group lowerhalfcircle subtract cell upperhalfgroup # group of atoms that are not at the upperhalfgroup
+set group lowerhalfcircle type 4
+set group upperhalfcircle type 2
+mass	  4 ${mcell}
+
+
+
+########################################################################################################################
+# Set solid tag command
+#set      group  group_name                  command           set solid_tag of group to 1     choose "fixed" or "free" boundary
+########################################################################################################################
+set       group     upperhalfcircle      ssa_tsdpd/solid_tag                1                               free
+set       group     lowerhalfcircle      ssa_tsdpd/solid_tag                1                               free
+
+
+
+##############################################################################################################################################################################################################
+# Forcing
+#   |          label          |   |   group-ID   |  |        style       |    | forcing type  |  | frequency |  |  species rank  | | geometry | | centerX | | centerY | | length-x |  | length-y |   |  value  |
+##############################################################################################################################################################################################################
+fix     source_conc                lowerhalfcircle     ssa_tsdpd/forcing           tsdpd              1               0             rectangle      1e-3         1e-3         1e-3           1e-3         1.0
+
+
+
+########################################################################################################################
+# Physical and mechanical properties
+########################################################################################################################
+variable        nu      equal  1e-3                                             # dynamic viscosity
+variable        E       equal  1e6                                              # Young's modulus of cell wall
+variable        Pratio  equal  0.3975                                           # Poisson's ratio of cell wall
+variable        Gmax    equal  v_E/(2.0*(1.0+v_Pratio))                         # Shear modulus of cell wall
+variable        Kw      equal  2.0*v_Gmax*(1+v_Pratio)/(3.0*(1.0-2.0*v_Pratio)) # Bulk modulus of cell wall
+variable        c0      equal  sqrt(v_Kw/v_densityf)                            # Artificial speed of sound of cell wall
+variable        Kc      equal  5e5                                              # Bulk modulus of cytoplasm
+variable        Kf      equal  1e6                                              # Bulk modulus of extracellular fluid
+variable        c0c     equal  sqrt(v_Kc/v_densityc)                            # Soundspeed of cytoplasm
+variable        c0f     equal  sqrt(v_Kf/v_densityf)                            # Soundspeed of extracellular fluid
+
+
+
+########################################################################################################################
+# Set interations
+########################################################################################################################
+variable	h      equal "3.0*v_deltaf"
+
+# 1 = outside fluid
+# 2 = upper half cell wall (+ resistant)
+# 3 = interior
+# 4 = lower half cell wall (- resistant)
+
+pair_style	ssa_tsdpd/bvf/fsi
+
+#                     |     rho0    |    |  c0  |  |   eta   |  |   h   |  |   cutc   |   | Shear modulus |   | kappa |
+pair_coeff      1 1     ${densityf}       ${c0f}       ${nu}       ${h}        ${h}           0.0                0.0
+pair_coeff      1 2     ${densityf}       ${c0f}       ${nu}       ${h}        ${h}           0.0                0.0
+pair_coeff      1 3     ${densityf}       ${c0f}       ${nu}       ${h}        ${h}           0.0                0.0
+pair_coeff      1 4     ${densityf}       ${c0f}       ${nu}       ${h}        ${h}           0.0                0.0
+pair_coeff      2 2     ${densityc}       ${c0}        ${nu}       ${h}        ${h}           ${Gmax}            1e-6
+pair_coeff      2 3     ${densityc}       ${c0}        ${nu}       ${h}        ${h}           ${Gmax}            0.0
+pair_coeff      2 4     ${densityc}       ${c0}        ${nu}       ${h}        ${h}           ${Gmax}            1e-6
+pair_coeff      3 3     ${densityi}       ${c0c}       ${nu}       ${h}        ${h}           0.0                0.0
+pair_coeff      3 4     ${densityi}       ${c0c}       ${nu}       ${h}        ${h}           0.0                0.0
+pair_coeff      4 4     ${densityc}       ${c0}        ${nu}       ${h}        ${h}           ${Gmax}            1e-6
+
+
+########################################################################################################################
+# Initial velocity and concentration fields
+########################################################################################################################
+# Velocity
+variable        U0 equal  0.0                       #(label, initial velocity)
+velocity        interior set ${U0} 0.0 0.0 units box   #(group-ID, set vx vy vz)
+
+
+
+###################################################################################
+# Info on screen
+###################################################################################
+thermo          ${freq_screen}
+
+
+
+###################################################################################
+# variable time step:
+###################################################################################
+#	           |id|  |group|  | style |  |freq| |min dt|  |max dt|   |max dx of particle in each time step| 
+#fix                dtfix   all    dt/reset    1       NULL      ${dt}               1e-5                         units box
+
+
+
+###################################################################################
+# Integration of particles' position, velocity, concentration
+###################################################################################
+# Integrator    |    label    |    |  group  |  |     style     | 
+fix              integration          all         ssa_tsdpd/bvf/fsi
+
+#compute density
+compute         rhoatom all ssa_tsdpd/rho/atom
+
+#compute phi
+compute         phiatom all ssa_tsdpd/phi/atom
+
+#compute solid_tag
+compute         solidtagatom all ssa_tsdpd/solid_tag/atom
+
+#compute concentration
+compute         concentration1 all ssa_tsdpd/C/atom 0    # concentration of species 0 (former C_[0])
+
+
+###################################################################################
+# Output results
+###################################################################################
+#              | label |  |group-ID|  |    style    |  |     frequency      |  |  filenames | |      variables to crint         |
+dump             dmpvtk    celltot           vtk            ${freq_results}        dump*.vtk      id type vx vy vz c_rhoatom c_phiatom c_solidtagatom c_concentration1
+
+
+###################################################################################
+# Run simulation
+###################################################################################
+variable        skin equal 0.3*${h}
+neighbor        ${skin} bin
+timestep        ${dt}
+run             ${nt}
+

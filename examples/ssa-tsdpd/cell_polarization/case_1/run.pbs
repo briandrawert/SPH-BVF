@@ -1,0 +1,11 @@
+#!/bin/sh 
+#PBS -N polarization1
+#PBS -l nodes=1:ppn=16
+#PBS -l walltime=00:30:00 
+#PBS -mea 
+#PBS -r n 
+#PBS -V 
+cd $PBS_O_WORKDIR 
+
+mpirun -np 16 ../../../../src/lmp_mpi < cell_polarization.lmp
+

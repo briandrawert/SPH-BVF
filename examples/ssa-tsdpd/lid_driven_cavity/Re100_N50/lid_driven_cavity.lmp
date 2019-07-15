@@ -1,0 +1,229 @@
+# SPH lid-driven cavity
+# Author: Bruno Jacob, UCSB
+# Email: bruno@engineering.ucsb.edu
+# Date: June 28, 2019
+
+
+###################################################################################
+# Lammps setup
+###################################################################################
+dimension         2
+units             si
+#                 |   atom style  |     |num_sdpd_species|   |num_ssa_species|   |num_ssa_reactions|  
+atom_style         ssa_tsdpd/atomic            0                     0                    0
+
+
+
+###################################################################################
+# Temporal integration setup
+###################################################################################
+variable     dt equal 1e-4                     #time step
+variable     nt equal 20000000                 #number of time steps
+variable     freq_results equal 10000          #freq. writing results (file)
+variable     freq_screen equal  10000          #freq. writing results (screen)
+
+
+
+###################################################################################
+# Domain setup
+###################################################################################
+boundary	   f f p 
+variable           Lx equal 1.0                           #length x-dir
+variable           Ly equal 1.0                           #length y-dir
+variable           nxw equal 3                            #number of wall particles
+variable           nx equal 50                            #number of fluid particles in x-dir
+variable           delta equal v_Lx/v_nx                  #space between fluid particles
+variable           deltaWall equal v_delta                #space between wall particles
+variable           densityf equal 1.0                     #density of fluid phase
+variable           Ltotx equal v_Lx+2*v_nxw*v_delta
+variable           Ltoty equal v_Ly+2*v_nxw*v_delta
+
+
+
+###################################################################################
+# Create atoms and regions
+###################################################################################
+variable           Lz equal v_deltaWall                #length z-dir
+variable           eps equal 1e-12
+variable    	   wallThickness equal v_nxw*v_delta       #x-coord cell center
+variable           xL0 equal -v_wallThickness 
+variable           xL1 equal 0.0
+variable           xR0 equal 1.0
+variable           xR1 equal 1.0+v_wallThickness
+variable           yB0 equal -v_wallThickness
+variable           yB1 equal 0.0
+variable           yT0 equal 1.0
+variable           yT1 equal 1.0+v_wallThickness
+
+
+# evaluate volumes
+variable       vtot     equal v_Ltotx*v_Ltoty    #actual total volume of fluid (for 2d system)
+variable       vfluid   equal v_xR0*v_yT0        #volume of cell wall
+variable       vwall    equal v_vtot-v_vfluid    #volume of wall
+
+
+# create simulation box
+region         domain block ${xL0} ${xR1} ${yB0} ${yT1} 0 ${Lz} units box
+create_box     2 domain
+
+
+# create walls
+lattice        sq ${deltaWall} origin 0.5 0.5 0.0
+
+region         left_wall_region block ${xL0} ${xL1} ${yB0} ${yT1} 0 ${Lz} units box
+create_atoms   2 region left_wall_region
+group          left_wall region left_wall_region
+
+region         right_wall_region block ${xR0} ${xR1} ${yB0} ${yT1} 0 ${Lz} units box
+delete_atoms   region right_wall_region
+create_atoms   2 region right_wall_region
+group          right_wall region right_wall_region
+
+region         bottom_wall_region block ${xL0} ${xR1} ${yB0} ${yB1} 0 ${Lz} units box
+delete_atoms   region bottom_wall_region
+create_atoms   2 region bottom_wall_region
+group          bottom_wall region bottom_wall_region
+
+region         lid_region block ${xL0} ${xR1} ${yT0} ${yT1} 0 ${Lz} units box
+delete_atoms   region lid_region
+create_atoms   2 region lid_region
+group          lid region lid_region
+
+
+# create fluid region
+lattice	       sq ${delta} origin 0.5 0.5 0.0
+region         fluid_region block ${xL1}+1e-3 ${xR0} ${yB1}+1e-3 ${yT0} 0 ${Lz} units box
+create_atoms   1 region fluid_region
+group          fluid region fluid_region
+
+
+# create fixed_walls group and set wall particles to type 2
+group          wall subtract all fluid lid
+set            group wall type 2 
+set            group lid type 2
+
+
+# count atoms in each group
+variable       nwall equal count(wall)   #number of atoms in wall group
+variable       nlid equal count(lid)   #number of atoms in wall group
+variable       nfluid equal count(fluid) #number of atoms in fluid group
+
+
+# mass of fluid particles
+variable       mfluid equal v_vfluid*v_densityf/v_nfluid
+
+
+# mass of wall particles
+variable       mwall equal v_vwall*v_densityf/v_nwall
+
+print          "nwall     = ${nwall}"
+print          "nfluid    = ${nfluid}"
+print          "nlid      = ${nlid}"
+print          "mfluid    = ${mfluid}"
+
+mass  	  1 ${mfluid}
+mass	  2 ${mwall}
+
+set	  group all ssa_tsdpd/rho ${densityf}
+set	  group all ssa_tsdpd/e 0.
+
+
+
+########################################################################################################################
+# Set solid tag command
+#set      group  group_name                  command           set solid_tag of group to 1     choose "fixed" or "free" boundary
+########################################################################################################################
+set       group     wall                ssa_tsdpd/solid_tag                1                               fixed
+set       group     lid                 ssa_tsdpd/solid_tag                1                               fixed
+
+
+
+########################################################################################################################
+# Physical and mechanical properties
+########################################################################################################################
+variable        nu     equal  1e-2       # dynamic viscosity
+variable        Gmax   equal  0.0        # shear modulus (maximum)
+variable        c0     equal  10.0       # sound speed
+print           "c0 = ${c0}"
+
+
+
+########################################################################################################################
+# Set interations
+########################################################################################################################
+variable	h      equal "2.5*v_delta"
+
+# 1 = fluid
+# 2 = walls
+
+pair_style      ssa_tsdpd/bvf/transportVelocity
+#pair_style      ssa_tsdpd/bvf/mechanics
+#                     |     rho0    |    |  c0  |  |   eta   |  |   h   |  |   cutc   |  | Shear modulus |
+pair_coeff      1 1     ${densityf}        ${c0}      ${nu}        ${h}        ${h}             0.0
+pair_coeff      1 2     ${densityf}        ${c0}      ${nu}        ${h}        ${h}             0.0
+pair_coeff      2 2     ${densityf}        ${c0}      ${nu}        ${h}        ${h}             0.0 
+
+
+
+###################################################################################
+# Info on screen
+###################################################################################
+thermo          ${freq_screen}
+
+
+
+###################################################################################
+# variable time step:
+###################################################################################
+#	           |id|  |group|  | style |  |freq| |min dt|  |max dt|   |max dx of particle in each time step| 
+#fix                dtfix   all    dt/reset    1       NULL      ${dt}      1e-5                               units box
+
+
+
+###################################################################################
+# Integration of particles' position, velocity, concentration
+###################################################################################
+# Integrator    |    label    |    |  group  |  |     style     | 
+fix               integration          all          ssa_tsdpd/bvf/transportVelocity
+
+
+
+########################################################################################################################
+# Initial velocity and concentration fields
+########################################################################################################################
+# Velocity
+variable        U0 equal 1.0                            #(label, initial velocity)
+velocity        lid set ${U0} 0.0 0.0 units box         #(group-ID, set vx vy vz)
+fix             freeze_fix lid setforce 0.0 0.0 0.0     #prevents other forces to act on the lid
+
+
+#compute density
+compute         rhoatom all ssa_tsdpd/rho/atom
+
+#compute pressure
+compute         patom all ssa_tsdpd/p/atom
+
+#compute phi
+compute         phiatom all ssa_tsdpd/phi/atom
+
+#compute solid_tag
+compute         solidtagatom all ssa_tsdpd/solid_tag/atom
+
+
+
+###################################################################################
+# Output results
+###################################################################################
+#              | label |  |group-ID|  |    style    |  |     frequency      |  |  filenames | |      variables to crint         |
+dump             dmpvtk       all           vtk            ${freq_results}        dump*.vtk      id type vx vy vz c_rhoatom c_phiatom c_solidtagatom
+
+
+
+###################################################################################
+# Run simulation
+###################################################################################
+variable        skin equal 0.01*${h}
+neighbor        ${skin} bin
+timestep        ${dt}
+run             ${nt}
+

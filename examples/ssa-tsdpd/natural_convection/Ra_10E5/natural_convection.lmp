@@ -1,0 +1,245 @@
+# SPH natural convection validation (advection + diffusion)
+# Author: Bruno Jacob, UCSB
+# Email: bruno@engineering.ucsb.edu
+# Date: June 28, 2019
+
+
+###################################################################################
+# Lammps setup
+###################################################################################
+dimension          2
+units              si
+#                 |    atom style    | |num_tdpd_species|  |num_ssa_species|  |num_ssa_reactions|
+atom_style         ssa_tsdpd/atomic            1                   0                  0
+
+
+
+###################################################################################
+# Temporal integration setup
+###################################################################################
+variable     dt equal 1e-4               #time step
+variable     nt equal 10000000           #number of time steps
+variable     freq_results equal 10000    #freq. writing results (file)
+variable     freq_screen equal 10000     #freq. writing results (screen)
+
+
+
+###################################################################################
+# Domain setup
+###################################################################################
+boundary           f f p
+
+variable           Lxint equal 1.
+variable           Lyint equal 1.
+
+variable           Nxint equal 200
+variable           Nyint equal 200
+
+variable           Sc equal 0.7
+variable           Ra equal 1e5
+
+variable           deltax equal ${Lxint}/${Nxint}
+variable           deltay equal ${Lyint}/${Nyint}
+
+variable           Nxwall equal 3
+variable           Nywall equal 3
+
+variable           Lx equal ${Lxint}+${Nxwall}*2*${deltax}
+variable           Ly equal ${Lyint}+${Nywall}*2*${deltay}
+variable           Lz equal v_deltax
+
+variable           cx equal 0
+variable           cy equal 0
+variable           cz equal ${Lz}/2
+
+variable           radius_external equal 0.1  #external radius
+
+variable           Npx equal ${Nxint}+2*${Nxwall}
+variable           Npy equal ${Nyint}+2*${Nywall}
+variable           Np equal  ${Npx}*${Npy}
+
+variable           xmin equal -v_Lx/2
+variable           xmax equal v_Lx/2
+variable           ymin equal -v_Ly/2
+variable           ymax equal v_Ly/2
+variable           zmin equal 0
+variable           zmax equal v_Lz
+
+variable           xminint equal -v_Lxint/2
+variable           xmaxint equal v_Lxint/2
+variable           yminint equal -v_Lyint/2
+variable           ymaxint equal v_Lyint/2
+variable           zminint equal 0
+variable           zmaxint equal ${Lz}
+
+variable           vtot equal v_Lx*v_Ly
+variable           mtot equal v_vtot
+variable           mi equal v_vtot/v_Np
+
+variable           C0 equal 1.0
+
+variable           mustar equal sqrt(v_Sc/v_Ra)
+variable           kappastar equal 1.0/sqrt(v_Sc*v_Ra)
+
+lattice            sq ${deltax} origin 0.5 0.5 0.0
+
+
+print "mass per particle = ${mi}"
+print "Rayleigh number   = ${Ra}"
+print "Schmidt number    = ${Sc}"
+print "C0                = ${C0}"
+
+
+
+###################################################################################
+# Create atoms and regions
+###################################################################################
+
+# create simulation domain
+region             domain block ${xmin} ${xmax} ${ymin} ${ymax} ${zmin} ${zmax} units box
+create_box         2 domain
+
+
+# create fluid particles
+region             fluid_region block  ${xminint} ${xmaxint} ${yminint} ${ymaxint} EDGE EDGE units box
+create_atoms       1 region fluid_region
+group              fluid region fluid_region
+
+
+# create cylinder at the center of the domain
+region             sphere_region sphere ${cx} ${cy} ${cz} ${radius_external} units box
+delete_atoms       region sphere_region
+create_atoms       2 region sphere_region
+#create_atoms      2 random 1000 5813513 sphere_region
+group              sphere region sphere_region
+
+
+# create walls
+region             bottom_wall_region block EDGE EDGE ${ymin} ${yminint} EDGE EDGE units box
+delete_atoms       region bottom_wall_region
+create_atoms       2 region bottom_wall_region
+group              bottom_wall region bottom_wall_region
+
+region             top_wall_region block EDGE EDGE ${ymaxint} ${ymax} EDGE EDGE units box
+delete_atoms       region top_wall_region
+create_atoms       2 region top_wall_region
+group              top_wall region top_wall_region
+
+region             left_wall_region block ${xmin} ${xminint} EDGE EDGE EDGE EDGE units box
+delete_atoms       region left_wall_region
+create_atoms       2 region left_wall_region
+group              left_wall region left_wall_region
+
+region             right_wall_region block ${xmaxint} ${xmax} EDGE EDGE EDGE EDGE units box
+delete_atoms       region right_wall_region
+create_atoms       2 region right_wall_region
+group              right_wall region right_wall_region
+
+group              walls union bottom_wall top_wall left_wall right_wall
+
+
+# set initial values
+mass               * ${mi}
+
+set	  	   group all ssa_tsdpd/rho 1
+set	  	   group all ssa_tsdpd/e 1e-6
+
+
+# set initial values
+mass               * ${mi}
+
+
+variable           h equal "2.6*v_deltax"
+variable           hc equal "2.6*v_deltax"
+
+pair_style         ssa_tsdpd/bvf/transportVelocity
+#                  | rho0 | |  c0  | |    eta    |   |   h   |   |   cutc   |  | G | |   kappa[0]   |      
+pair_coeff     * *    1.       5.     ${mustar}        ${h}          ${h}       0.     ${kappastar}      
+
+
+
+###################################################################################
+# Initial velocity and concentration fields
+###################################################################################
+velocity         sphere set 0.0 0.0 0.0   #set velocity of particles in group sphere
+
+
+#Concentration (note: initializing concentrations as 0 is optional; it will be 0 by default)
+               #|group| | group-ID| |     style    | | species rank| | value | 
+set             group        all       ssa_tsdpd/C            0          0.0
+set             group        sphere    ssa_tsdpd/C            0          ${C0}
+
+
+###################################################################################
+# Info on screen
+###################################################################################
+thermo          ${freq_screen}
+thermo_style custom step dt press temp etotal
+
+
+
+#################################################################################################################################
+# Set solid tag
+#set      group  group_name                  command           set solid_tag of group to 1     choose "fixed" or "free" boundary
+#################################################################################################################################
+set       group     walls                ssa_tsdpd/solid_tag                1                               fixed
+set       group     sphere               ssa_tsdpd/solid_tag                1                               fixed
+
+
+
+###################################################################################
+# Add buoyancy force
+###################################################################################
+
+# f_boussinesq[i][rank_coordinate] = - acceleration * ( C[i][rank_buoyancy] - C_ref )
+#
+#   |   label   |   | group-ID | |        style      |   |    type        |   |acceleration|     | rank coordinate (x=0, y=1, z=2) |   | rank buoyancy term |    | C_ref  |
+fix   boussinesq        all        ssa_tsdpd/buoyancy     boussinesq/sdpd         -1.0                            1                              0                  0.0
+
+
+
+#################################################################################################################################
+# Impose concentration boundary conditions 
+#################################################################################################################################
+#   |          label          |   |  group-ID  |  |        style       |    | forcing type  |  | frequency |  |  species rank  | | geometry | | centerX | | centerY | | length-x |  | length-y |   |  value  |
+fix         forcing_walls              walls        ssa_tsdpd/forcing           tsdpd                1                0            rectangle      0.0         0.0         2.0            2.0            0.0
+
+#   |          label          |   |  group-ID  |  |        style       |    | forcing type  |  | frequency |  |  species rank  | | geometry | | centerX | | centerY | | length-x |  | length-y |   |  value  |
+fix       forcing_cylinder            sphere        ssa_tsdpd/forcing           tsdpd                1                0            rectangle      0.0         0.0         2.0            2.0          ${C0}
+
+
+
+###################################################################################
+# Integration of particles' position, velocity, concentration
+###################################################################################
+# Integrator    |    label    |    |  group  |  |              style              | 
+fix              integration1         all         ssa_tsdpd/bvf/transportVelocity
+
+
+
+###################################################################################
+# compute variables to be printed
+###################################################################################
+compute            rho all ssa_tsdpd/rho/atom               # density
+compute            phi all ssa_tsdpd/phi/atom               # boundary volume fraction
+compute            solid_tag all ssa_tsdpd/solid_tag/atom   # solid tag
+compute            concentration1 all ssa_tsdpd/C/atom 0    # concentration of species 0
+
+
+
+###################################################################################
+# Output results
+###################################################################################
+#              | label |  |group-ID|  |    style    |  |     frequency      |  |  filenames | |              variables to print            |
+dump             dmpvtk       all           vtk           ${freq_results}          dump*.vtk        id type vx vy vz c_rho c_phi c_solid_tag c_concentration1
+
+
+
+###################################################################################
+# Run simulation
+###################################################################################
+variable        skin equal 0.3*${h}
+neighbor        ${skin} bin
+timestep        ${dt}
+run             ${nt}
+
